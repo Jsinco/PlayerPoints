@@ -10,7 +10,7 @@ softdepend: [Vault, Treasury, Votifier, PlaceholderAPI, TokenManager, GamePoints
 loadbefore: [mcMMO]
 commands:
   points:
-    aliases: [p]
+    #aliases: [p] No need for this, handled by config
     description: Root command for PlayerPoints
 permissions:
   playerpoints.*:

@@ -6,8 +6,8 @@ plugins {
     id 'maven-publish'
 }
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
+sourceCompatibility = 1.9
+targetCompatibility = 1.9
 group = 'org.black_ixx'
 version = '3.2.6'
 

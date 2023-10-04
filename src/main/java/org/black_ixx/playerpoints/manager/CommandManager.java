@@ -5,11 +5,14 @@ import dev.rosewood.rosegarden.RosePlugin;
 import dev.rosewood.rosegarden.config.CommentedFileConfiguration;
 import dev.rosewood.rosegarden.manager.Manager;
 import java.io.File;
+import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.black_ixx.playerpoints.PlayerPoints;
 import org.black_ixx.playerpoints.commands.Commander;
+import org.bukkit.Bukkit;
+import org.bukkit.command.CommandMap;
 import org.bukkit.command.PluginCommand;
 
 public class CommandManager extends Manager {
@@ -80,8 +83,18 @@ public class CommandManager extends Manager {
         // Register commands
         Commander commander = new Commander((PlayerPoints) this.rosePlugin);
         PluginCommand command = this.rosePlugin.getCommand("points");
-        if (command != null)
-            command.setExecutor(commander);
+        if (command != null) command.setExecutor(commander);
+        try { // Add command aliases from config
+            final Field bukkitCommandMap = Bukkit.getServer().getClass().getDeclaredField("commandMap");
+
+            bukkitCommandMap.setAccessible(true);
+            CommandMap commandMap = (CommandMap) bukkitCommandMap.get(Bukkit.getServer());
+            for (String alias : ConfigurationManager.Setting.COMMAND_ALIASES.getStringList()) {
+                commandMap.register(alias, "playerpoints", command);
+            }
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
