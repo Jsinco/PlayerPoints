@@ -40,7 +40,8 @@ public class CommandManager extends Manager {
         RESET,
         SET,
         TAKE,
-        VERSION;
+        VERSION,
+        SHOP;
 
         private List<String> aliases;
 
