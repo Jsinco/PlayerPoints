@@ -38,11 +38,11 @@ public class ImportCommand extends PointsCommand {
 
         if (args.length < 1 || !args[0].equalsIgnoreCase("confirm")) {
             String databaseType = plugin.getManager(DataManager.class).getDatabaseConnector() instanceof MySQLConnector ? "MySQL" : "SQLite";
-            localeManager.sendMessage(sender, "command-import-warning", StringPlaceholders.single("type", databaseType));
+            localeManager.sendMessage(sender, "command-import-warning", StringPlaceholders.of("type", databaseType));
             return;
         }
 
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+        plugin.getScheduler().runTaskAsync(() -> {
             FileConfiguration configuration = YamlConfiguration.loadConfiguration(file);
             ConfigurationSection pointsSection = configuration.getConfigurationSection("Points");
             if (pointsSection == null)

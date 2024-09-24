@@ -19,7 +19,7 @@ public class ImportLegacyCommand extends PointsCommand {
 
     @Override
     public void execute(PlayerPoints plugin, CommandSender sender, String[] args) {
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+        plugin.getScheduler().runTaskAsync(() -> {
             LocaleManager localeManager = plugin.getManager(LocaleManager.class);
             if (!(plugin.getManager(DataManager.class).getDatabaseConnector() instanceof MySQLConnector)) {
                 localeManager.sendMessage(sender, "command-importlegacy-only-mysql");
@@ -32,9 +32,9 @@ public class ImportLegacyCommand extends PointsCommand {
             }
 
             if (plugin.getManager(DataManager.class).importLegacyTable(args[0])) {
-                localeManager.sendMessage(sender, "command-importlegacy-success", StringPlaceholders.single("table", args[0]));
+                localeManager.sendMessage(sender, "command-importlegacy-success", StringPlaceholders.of("table", args[0]));
             } else {
-                localeManager.sendMessage(sender, "command-importlegacy-failure", StringPlaceholders.single("table", args[0]));
+                localeManager.sendMessage(sender, "command-importlegacy-failure", StringPlaceholders.of("table", args[0]));
             }
         });
     }

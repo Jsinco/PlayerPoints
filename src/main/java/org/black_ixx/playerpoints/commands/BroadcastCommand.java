@@ -3,11 +3,9 @@ package org.black_ixx.playerpoints.commands;
 import dev.rosewood.rosegarden.utils.StringPlaceholders;
 import java.util.Collections;
 import java.util.List;
-import java.util.UUID;
 import org.black_ixx.playerpoints.PlayerPoints;
 import org.black_ixx.playerpoints.manager.CommandManager;
 import org.black_ixx.playerpoints.manager.LocaleManager;
-import org.black_ixx.playerpoints.models.Tuple;
 import org.black_ixx.playerpoints.util.PointsUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
@@ -27,17 +25,17 @@ public class BroadcastCommand extends PointsCommand {
             return;
         }
 
-        PointsUtils.getPlayerByName(args[0]).thenAccept(player -> {
+        PointsUtils.getPlayerByName(args[0], player -> {
             if (player == null) {
-                localeManager.sendMessage(sender, "unknown-player", StringPlaceholders.single("player", args[0]));
+                localeManager.sendMessage(sender, "unknown-player", StringPlaceholders.of("player", args[0]));
                 return;
             }
 
             int points = plugin.getAPI().look(player.getFirst());
             for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
                 localeManager.sendMessage(onlinePlayer, "command-broadcast-message", StringPlaceholders.builder("player", player.getSecond())
-                        .addPlaceholder("amount", PointsUtils.formatPoints(points))
-                        .addPlaceholder("currency", localeManager.getCurrencyName(points)).build());
+                        .add("amount", PointsUtils.formatPoints(points))
+                        .add("currency", localeManager.getCurrencyName(points)).build());
             }
         });
     }

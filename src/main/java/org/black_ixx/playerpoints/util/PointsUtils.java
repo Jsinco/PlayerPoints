@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.black_ixx.playerpoints.PlayerPoints;
@@ -22,7 +22,6 @@ import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.metadata.MetadataValue;
 import org.bukkit.util.StringUtil;
-import org.jetbrains.annotations.Nullable;
 
 public final class PointsUtils {
 
@@ -98,35 +97,59 @@ public final class PointsUtils {
 
     /**
      * Gets an OfflinePlayer by name, prioritizing online players.
+     *
+     * @param name The name of the player
+     * @param callback A callback to run with a tuple of the player's UUID and name, or null if not found
+     */
+    @SuppressWarnings("deprecation")
+    public static void getPlayerByName(String name, Consumer<Tuple<UUID, String>> callback) {
+        Player player = Bukkit.getPlayer(name);
+        if (player != null) {
+            callback.accept(new Tuple<>(player.getUniqueId(), player.getName()));
+            return;
+        }
+
+        PlayerPoints plugin = PlayerPoints.getInstance();
+        plugin.getScheduler().runTaskAsync(() -> {
+            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(name);
+            if (offlinePlayer.getName() != null && offlinePlayer.hasPlayedBefore()) {
+                Tuple<UUID, String> tuple = new Tuple<>(offlinePlayer.getUniqueId(), offlinePlayer.getName());
+                plugin.getScheduler().runTask(() -> callback.accept(tuple));
+                return;
+            }
+
+            UUID uuid = plugin.getManager(DataManager.class).lookupCachedUUID(name);
+            if (uuid != null) {
+                Tuple<UUID, String> tuple = new Tuple<>(uuid, name);
+                plugin.getScheduler().runTask(() -> callback.accept(tuple));
+                return;
+            }
+
+            plugin.getScheduler().runTask(() -> callback.accept(null));
+        });
+    }
+
+    /**
+     * Gets an OfflinePlayer by name, prioritizing online players.
      * Warning: This method can cause a blocking call to the database for UUID lookups.
      *
      * @param name The name of the player
-     * @return A tuple of the player's UUID and name, or null if not found
+     * @return a tuple of the player's UUID and name, or null if not found
      */
-    @SuppressWarnings("deprecation")
-    public static CompletableFuture<Tuple<UUID, String>> getPlayerByName(String name) {
+    public static Tuple<UUID, String> getPlayerByName(String name) {
         Player player = Bukkit.getPlayer(name);
         if (player != null)
-            return CompletableFuture.completedFuture(new Tuple<>(player.getUniqueId(), player.getName()));
+            return new Tuple<>(player.getUniqueId(), player.getName());
 
-        CompletableFuture<Tuple<UUID, String>> completableFuture = new CompletableFuture<>();
-        Bukkit.getScheduler().runTaskAsynchronously(PlayerPoints.getInstance(), () -> {
-            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(name);
-            if (offlinePlayer.getName() != null && offlinePlayer.hasPlayedBefore()) {
-                completableFuture.complete(new Tuple<>(offlinePlayer.getUniqueId(), offlinePlayer.getName()));
-                return;
-            }
+        OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(name);
+        if (offlinePlayer.getName() != null && offlinePlayer.hasPlayedBefore())
+            return new Tuple<>(offlinePlayer.getUniqueId(), offlinePlayer.getName());
 
-            UUID uuid = PlayerPoints.getInstance().getManager(DataManager.class).lookupCachedUUID(name);
-            if (uuid != null) {
-                completableFuture.complete(new Tuple<>(uuid, name));
-                return;
-            }
+        UUID uuid = PlayerPoints.getInstance().getManager(DataManager.class).lookupCachedUUID(name);
+        if (uuid != null)
+            return new Tuple<>(uuid, name);
 
-            completableFuture.complete(null);
-        });
-
-        return completableFuture;
+        return null;
     }
 
     /**

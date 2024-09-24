@@ -1,5 +1,8 @@
 package org.black_ixx.playerpoints.manager;
 
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Iterables;
 import com.google.common.io.ByteArrayDataOutput;
 import com.google.common.io.ByteStreams;
@@ -21,16 +24,17 @@ import java.util.SortedSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.black_ixx.playerpoints.database.migrations._1_Create_Tables;
 import org.black_ixx.playerpoints.database.migrations._2_Add_Table_Username_Cache;
 import org.black_ixx.playerpoints.listeners.PointsMessageListener;
-import org.black_ixx.playerpoints.manager.ConfigurationManager.Setting;
 import org.black_ixx.playerpoints.models.PendingTransaction;
-import org.black_ixx.playerpoints.models.PointsValue;
 import org.black_ixx.playerpoints.models.SortedPlayer;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -42,26 +46,41 @@ import org.bukkit.event.player.PlayerJoinEvent;
 
 public class DataManager extends AbstractDataManager implements Listener {
 
-    private final Map<UUID, PointsValue> pointsCache;
+    private LoadingCache<UUID, Integer> pointsCache;
     private final Map<UUID, Deque<PendingTransaction>> pendingTransactions;
     private final Map<UUID, String> pendingUsernameUpdates;
 
     public DataManager(RosePlugin rosePlugin) {
         super(rosePlugin);
 
-        this.pointsCache = new ConcurrentHashMap<>();
         this.pendingTransactions = new ConcurrentHashMap<>();
         this.pendingUsernameUpdates = new ConcurrentHashMap<>();
 
         Bukkit.getPluginManager().registerEvents(this, rosePlugin);
-        Bukkit.getScheduler().runTaskTimerAsynchronously(rosePlugin, this::update, 10L, 10L);
+        rosePlugin.getScheduler().runTaskTimerAsync(this::update, 10L, 10L);
+    }
+
+    @Override
+    public void reload() {
+        super.reload();
+
+        this.pointsCache = CacheBuilder.newBuilder()
+                .concurrencyLevel(2)
+                .expireAfterAccess(5, TimeUnit.MINUTES)
+                .refreshAfterWrite(org.black_ixx.playerpoints.setting.SettingKey.CACHE_DURATION.get(), TimeUnit.SECONDS)
+                .build(new CacheLoader<UUID, Integer>() {
+                    @Override
+                    public Integer load(UUID uuid) throws Exception {
+                        return DataManager.this.getPoints(uuid);
+                    }
+                });
     }
 
     @Override
     public void disable() {
         this.update();
 
-        this.pointsCache.clear();
+        this.pointsCache.invalidateAll();
         this.pendingTransactions.clear();
         this.pendingUsernameUpdates.clear();
 
@@ -83,30 +102,23 @@ public class DataManager extends AbstractDataManager implements Listener {
         for (Map.Entry<UUID, Deque<PendingTransaction>> entry : processingPendingTransactions.entrySet()) {
             UUID uuid = entry.getKey();
             int points = this.getEffectivePoints(uuid, entry.getValue());
-            this.pointsCache.put(uuid, new PointsValue(points));
+            this.pointsCache.put(uuid, points);
             transactions.put(uuid, points);
         }
 
         if (!transactions.isEmpty())
             this.updatePoints(transactions);
 
-        // Remove stale cache entries
-        synchronized (this.pointsCache) {
-            this.pointsCache.values().removeIf(PointsValue::isStale);
-        }
-
-        synchronized (this.pendingUsernameUpdates) {
-            if (!this.pendingUsernameUpdates.isEmpty()) {
-                this.updateCachedUsernames(this.pendingUsernameUpdates);
-                this.pendingUsernameUpdates.clear();
-            }
+        if (!this.pendingUsernameUpdates.isEmpty()) {
+            this.updateCachedUsernames(this.pendingUsernameUpdates);
+            this.pendingUsernameUpdates.clear();
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerPreLogin(AsyncPlayerPreLoginEvent event) {
         if (event.getLoginResult() == AsyncPlayerPreLoginEvent.Result.ALLOWED)
-            this.pointsCache.put(event.getUniqueId(), new PointsValue(this.getPoints(event.getUniqueId())));
+            this.pointsCache.put(event.getUniqueId(), this.getPoints(event.getUniqueId()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -128,11 +140,11 @@ public class DataManager extends AbstractDataManager implements Listener {
     private int getEffectivePoints(UUID playerId, Deque<PendingTransaction> transactions) {
         // Get the cached amount or fetch it fresh from the database
         int points;
-        if (this.pointsCache.containsKey(playerId)) {
-            points = this.pointsCache.get(playerId).getValue();
-        } else {
-            points = this.getPoints(playerId);
-            this.pointsCache.put(playerId, new PointsValue(points));
+        try {
+            points = this.pointsCache.get(playerId);
+        } catch (ExecutionException e) {
+            e.printStackTrace();
+            points = 0;
         }
 
         // Apply any pending transactions
@@ -159,8 +171,7 @@ public class DataManager extends AbstractDataManager implements Listener {
      * @param uuid The player's UUID
      */
     public void refreshPoints(UUID uuid) {
-        if (this.pointsCache.containsKey(uuid))
-            Bukkit.getScheduler().runTaskAsynchronously(this.rosePlugin, () -> this.pointsCache.put(uuid, new PointsValue(this.getPoints(uuid))));
+        this.pointsCache.invalidate(uuid);
     }
 
     /**
@@ -186,7 +197,7 @@ public class DataManager extends AbstractDataManager implements Listener {
         });
 
         if (generate.get()) {
-            int startingBalance = Setting.STARTING_BALANCE.getInt();
+            int startingBalance = org.black_ixx.playerpoints.setting.SettingKey.STARTING_BALANCE.get();
             this.setPoints(playerId, startingBalance);
             value.set(startingBalance);
         }
@@ -239,13 +250,13 @@ public class DataManager extends AbstractDataManager implements Listener {
                     statement.addBatch();
 
                     // Update cached value
-                    this.pointsCache.computeIfAbsent(entry.getKey(), x -> new PointsValue(entry.getValue())).setValue(entry.getValue());
+                    this.pointsCache.put(entry.getKey(), entry.getValue());
 
                     // Send update to BungeeCord if enabled
-                    if (Setting.BUNGEECORD_SEND_UPDATES.getBoolean() && this.rosePlugin.isEnabled()) {
+                    if (org.black_ixx.playerpoints.setting.SettingKey.BUNGEECORD_SEND_UPDATES.get() && this.rosePlugin.isEnabled()) {
                         ByteArrayDataOutput output = ByteStreams.newDataOutput();
                         output.writeUTF("Forward");
-                        output.writeUTF("ALL");
+                        output.writeUTF("ONLINE");
                         output.writeUTF(PointsMessageListener.REFRESH_SUBCHANNEL);
 
                         byte[] bytes = entry.getKey().toString().getBytes(StandardCharsets.UTF_8);
@@ -276,8 +287,7 @@ public class DataManager extends AbstractDataManager implements Listener {
         });
 
         for (Player player : Bukkit.getOnlinePlayers())
-            if (this.pointsCache.containsKey(player.getUniqueId()))
-                this.offsetPoints(player.getUniqueId(), amount);
+            this.offsetPoints(player.getUniqueId(), amount);
 
         return true;
     }
@@ -305,9 +315,9 @@ public class DataManager extends AbstractDataManager implements Listener {
                 while (result.next()) {
                     UUID uuid = UUID.fromString(result.getString(1));
                     String username = result.getString(2);
-                    PointsValue pointsValue = this.pointsCache.get(uuid);
+                    Integer pointsValue = this.pointsCache.getIfPresent(uuid);
                     if (pointsValue == null)
-                        pointsValue = new PointsValue(result.getInt(3));
+                        pointsValue = result.getInt(3);
 
                     if (username != null) {
                         players.add(new SortedPlayer(uuid, username, pointsValue));
@@ -453,7 +463,7 @@ public class DataManager extends AbstractDataManager implements Listener {
     public UUID lookupCachedUUID(String username) {
         AtomicReference<UUID> value = new AtomicReference<>();
         this.databaseConnector.connect(connection -> {
-            String query = "SELECT uuid FROM " + this.getTablePrefix() + "username_cache WHERE username = ?";
+            String query = "SELECT uuid FROM " + this.getTablePrefix() + "username_cache WHERE LOWER(username) = LOWER(?)";
             try (PreparedStatement statement = connection.prepareStatement(query)) {
                 statement.setString(1, username);
                 ResultSet result = statement.executeQuery();
@@ -466,15 +476,15 @@ public class DataManager extends AbstractDataManager implements Listener {
     }
 
     private String getPointsTableName() {
-        if (ConfigurationManager.Setting.LEGACY_DATABASE_MODE.getBoolean()) {
-            return ConfigurationManager.Setting.LEGACY_DATABASE_NAME.getString();
+        if (org.black_ixx.playerpoints.setting.SettingKey.LEGACY_DATABASE_MODE.get()) {
+            return org.black_ixx.playerpoints.setting.SettingKey.LEGACY_DATABASE_NAME.get();
         } else {
             return super.getTablePrefix() + "points";
         }
     }
 
     private String getUuidColumnName() {
-        if (ConfigurationManager.Setting.LEGACY_DATABASE_MODE.getBoolean()) {
+        if (org.black_ixx.playerpoints.setting.SettingKey.LEGACY_DATABASE_MODE.get()) {
             return "playername";
         } else {
             return "uuid";
@@ -482,11 +492,10 @@ public class DataManager extends AbstractDataManager implements Listener {
     }
 
     @Override
-    public List<Class<? extends DataMigration>> getDataMigrations() {
+    public List<Supplier<? extends DataMigration>> getDataMigrations() {
         return Arrays.asList(
-                _1_Create_Tables.class,
-                _2_Add_Table_Username_Cache.class
+                _1_Create_Tables::new,
+                _2_Add_Table_Username_Cache::new
         );
     }
-
 }

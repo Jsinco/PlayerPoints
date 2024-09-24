@@ -25,10 +25,10 @@ public class MeCommand extends PointsCommand {
             return;
         }
 
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+        plugin.getScheduler().runTaskAsync(() -> {
             int amount = plugin.getAPI().look(((Player) sender).getUniqueId());
             localeManager.sendMessage(sender, "command-me-success", StringPlaceholders.builder("amount", PointsUtils.formatPoints(amount))
-                    .addPlaceholder("currency", localeManager.getCurrencyName(amount))
+                    .add("currency", localeManager.getCurrencyName(amount))
                     .build());
         });
     }
